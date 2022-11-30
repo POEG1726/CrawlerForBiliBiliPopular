@@ -1,6 +1,6 @@
+import time
 import tqdm
-
-pr = tqdm.tqdm.write
+import getopt
 import datetime
 import json
 import os
@@ -22,8 +22,11 @@ s = requests.Session()
 s.mount('http://', HTTPAdapter(max_retries=20))
 s.mount('https://', HTTPAdapter(max_retries=20))
 
-global pbar, Config, PictureList, UploadThreadsCounter
-
+global pbar, Config, PictureList, UploadThreadsCounter, Start, writeable, Target, ChangeTarget
+ChangeTarget = False
+pr = tqdm.tqdm.write
+writeable = True
+Start = 0
 psor = parsel.Selector
 path = sys.path[0]
 Timeout = None
@@ -101,12 +104,15 @@ def Compress_and_Upload(vol, owner, Organization, title):
     ) as archive:
         archive.writeall('/nas/Girls/{}/{}'.format(Organization, title), Organization)
     os.system(
-        '''bypy --processes 4 upload {} /photos/{}/'''.format(ArchiveName, Organization)
+        '''bypy --processes 4 upload {} /photos/{}/ >/dev/null 2>&1'''.format(
+            ArchiveName, Organization
+        )
     )
+    time.sleep(1)
     os.remove(ArchiveName)
     threadsmax.release()
     Lock.release()
-    
+
 
 def GetPictureUrl(DetailSite_Url: str, Header: dict):
     global PictureList
@@ -146,20 +152,34 @@ def Crawler(
     WebLatest: int,
     LocalLatest: int,
 ):
+    global pbar, PictureList
     with open('{}/../json/name.json'.format(path), 'r', encoding='utf8') as tmpjson:
         try:
             NameArr = json.load(tmpjson)
         except:
             NameArr = []
     try:
-        global pbar, PictureList
+        if ChangeTarget == True:
+            LocalLatest = Target
+            pr('The latest in json is {},but have -t option with {}'.format(LocalLatest,Target))
         if LocalLatest == WebLatest:
-            pr('{}:网站未更新'.format(Organization))
+            pr(
+                '[{}] {}:网站未更新'.format(
+                    datetime.datetime.now().strftime('%H:%M:%S'), Organization
+                )
+            )
             return
         else:
-            pr('{}:网站已更新    {}->{}'.format(Organization, WebLatest, LocalLatest))
+            pr(
+                '[{}] {}:网站已更新    {}->{}'.format(
+                    datetime.datetime.now().strftime('%H:%M:%S'),
+                    Organization,
+                    WebLatest,
+                    LocalLatest,
+                )
+            )
         LoopFlag = True
-        for i in range(115, Ends):
+        for i in range(Start, Ends):
             if LoopFlag == True:
                 if i == 0:
                     InitialSite = HomeSite + Organization
@@ -187,6 +207,15 @@ def Crawler(
                 )
                 for item in range(len(menu)):
                     menu[item] = HomeSite + menu[item]
+                with open(
+                    '{}/../json/tmp.json'.format(path, Organization),
+                    'r',
+                    encoding='utf8',
+                ) as tmpjson:
+                    tmpjson = json.load(tmpjson)
+                isexist_no = []
+                for i in range(len(tmpjson)):
+                    isexist_no.append(tmpjson[i]['No.'])
                 for j in range(len(menu)):
                     DetailSite = requests.get(
                         url=menu[j],
@@ -196,6 +225,20 @@ def Crawler(
                     )
                     DetailSite.encoding = 'utf8'
                     Title = str(psor(DetailSite.text).xpath("//header/h1/text()").get())
+                    if not Title:
+                        DetailSite = requests.get(
+                            url=menu[j],
+                            timeout=Timeout,
+                            verify=False,
+                            headers=Header,
+                        )
+                        DetailSite.encoding = 'utf8'
+                        Title = str(
+                            psor(DetailSite.text).xpath("//header/h1/text()").get()
+                        )
+                    if int(re.findall(r'\d+', Title)[0]) in isexist_no:
+                        pr('{}already existed'.format(re.findall(r'\d+', Title)[0]))
+                        continue
                     Title = (
                         Title.replace('_', '')
                         .replace('IMISS', 'Imiss')
@@ -210,12 +253,21 @@ def Crawler(
                     if '[' not in Title:
                         Title = re.sub(r'(?i)XiuRen', "[XiuRen秀人网]", Title)
                     pr(
-                        '当前:{}-{} target={}'.format(
-                            Organization, re.findall(r'\d+', Title)[0], LocalLatest
+                        '[{}] 当前:{}-{} target={}'.format(
+                            datetime.datetime.now().strftime('%H:%M:%S'),
+                            Organization,
+                            re.findall(r'\d+', Title)[0],
+                            LocalLatest,
                         )
                     )
                     if str(re.findall(r'\d+', Title)[0]) == str(LocalLatest):
-                        pr('{}:{}已存在,Done'.format(Organization, Title))
+                        pr(
+                            '[{}] {}:{}已存在,Done'.format(
+                                datetime.datetime.now().strftime('%H:%M:%S'),
+                                Organization,
+                                re.findall(r'\d+', Title)[0],
+                            )
+                        )
                         LoopFlag = False
                         break
                     else:
@@ -308,30 +360,34 @@ def Crawler(
                     info['Intro'] = Intro
                     info['PicturesPath'] = PictureList
                     NameArr.append(Name)
-                    shutil.copy(
-                        '{}/../json/{}.json'.format(path, Organization),
-                        '{}/../json/tmp.json'.format(path),
-                    )
-                    with open(
-                        '{}/../json/tmp.json'.format(path, Organization),
-                        'r',
-                        encoding='utf8',
-                    ) as tmpjson:
-                        try:
-                            tmpjson = json.load(tmpjson)
-                        except:
-                            tmpjson = []
-
-                    InfoArr = []
-                    InfoArr.append(info)
-                    with open(
-                        '{}/../json/{}.json'.format(path, Organization),
-                        'w',
-                        encoding='utf8',
-                    ) as PrintInfo:
-                        json.dump(
-                            InfoArr + tmpjson, PrintInfo, indent=4, ensure_ascii=False
+                    if writeable:
+                        shutil.copy(
+                            '{}/../json/{}.json'.format(path, Organization),
+                            '{}/../json/tmp.json'.format(path),
                         )
+                        with open(
+                            '{}/../json/tmp.json'.format(path, Organization),
+                            'r',
+                            encoding='utf8',
+                        ) as tmpjson:
+                            try:
+                                tmpjson = json.load(tmpjson)
+                            except:
+                                tmpjson = []
+
+                        InfoArr = []
+                        InfoArr.append(info)
+                        with open(
+                            '{}/../json/{}.json'.format(path, Organization),
+                            'w',
+                            encoding='utf8',
+                        ) as PrintInfo:
+                            json.dump(
+                                InfoArr + tmpjson,
+                                PrintInfo,
+                                indent=4,
+                                ensure_ascii=False,
+                            )
                     try:
 
                         threading.Thread(
@@ -351,13 +407,15 @@ def Crawler(
     except Exception as Er:
         pr(str(Er))
     finally:
-        SortList(Organization)
-        with open('{}/../json/name.json'.format(path), 'w', encoding='utf8') as tmpjson:
-            json.dump(list(set(NameArr)), tmpjson, ensure_ascii=False, indent=4)
+        if writeable:
+            SortList(Organization)
+            with open(
+                '{}/../json/name.json'.format(path), 'w', encoding='utf8'
+            ) as tmpjson:
+                json.dump(list(set(NameArr)), tmpjson, ensure_ascii=False, indent=4)
 
 
 def main():
-
     for i in Config:
         Header = {
             'user-agent': fake_useragent.UserAgent(
@@ -391,6 +449,54 @@ def main():
 
 
 if __name__ == '__main__':
+    opts, args = getopt.getopt(
+        args=sys.argv[1:],
+        shortopts='-h-s:-m:-t:-i',
+        longopts=['help', 'startpage=', 'mode=', 'target=', 'ignore'],
+    )
+    for opt_name, opt_value in opts:
+        if opt_name in ('-h', '--help'):
+            pr(
+                '''
+Tips:U best take -m:r option with -t or -i option
+
+[-h/--help]:show this info
+[-s/--startpage (page)]:set the page that the crawler start getting
+[-m/--mode (r/w)]:set crawler write json files mode,including writeable and readonly
+[-t/--target (subject)]:set the subject that crawler stop getting
+[-i/--ignore] set whether ignore the subject that already exists or not
+               '''
+            )
+            exit()
+        if opt_name in ('-s', '--startpage'):
+            try:
+                Start = int(opt_value)
+            except:
+                raise getopt.GetoptError(
+                    'option [{}] can only be [int] type'.format(opt_name)
+                )
+            pr('将从{}开始'.format(Start))
+        if opt_name in ('-m', '--mode'):
+            if opt_value != 'r' and opt_value != 'w':
+                raise getopt.GetoptError(
+                    'option [{}] can only choose in [r/w]'.format(opt_name)
+                )
+            pr('选择[{}]模式'.format(opt_value))
+            if opt_value == 'r':
+                writeable = False
+            if opt_value == 'w':
+                writeable == True
+
+        if opt_name in ('-t', '--target'):
+            try:
+                Start = int(opt_value)
+            except:
+                raise getopt.GetoptError(
+                    'option [{}] can only be [int] type'.format(opt_name)
+                )
+            ChangeTarget = True
+            Target = int(opt_value)
+    starttime = datetime.datetime.now()
     ArchiveName = path + '/../archives/json-{}-{}.7z'.format(
         datetime.datetime.now().strftime('%Y.%m.%d'), RandomString()
     )
@@ -398,4 +504,10 @@ if __name__ == '__main__':
         archive.writeall(path + '/../json/', '/jsons/')
     os.system('''bypy upload {} /jsons/'''.format(ArchiveName))
     os.remove(ArchiveName)
-    main()
+
+    main(ChangeTarget)
+
+    endtime = datetime.datetime.now()
+    pr('--Spend [{}]'.format(str(endtime - starttime).split('.')[0]))
+    pr('-----Start time is:{}'.format(str(starttime).split('.')[0]))
+    pr('-----End time is:{}'.format(str(endtime).split('.')[0]))
