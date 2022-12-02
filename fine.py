@@ -22,8 +22,12 @@ s = requests.Session()
 s.mount('http://', HTTPAdapter(max_retries=20))
 s.mount('https://', HTTPAdapter(max_retries=20))
 
-global pbar, Config, PictureList, UploadThreadsCounter, Start, writeable, Target, ChangeTarget
+global pbar, Config, PictureList, UploadThreadsCounter, Start, writeable, Target, ChangeTarget, Ignore, upload, Check  # , Point
+upload = True
+Check = False
 ChangeTarget = False
+# Point = None
+Ignore = True
 pr = tqdm.tqdm.write
 writeable = True
 Start = 0
@@ -34,14 +38,45 @@ HomeSite = 'https://www.jpmn5.cc/'
 Lock = threading.Lock()
 threadsmax = threading.BoundedSemaphore(5)
 PictureList = []
-with open('{}/../json/config.json'.format(path), 'r', encoding='utf8') as Config:
+with open(
+    '{}/../json/config.json'.format(path),
+    'r',
+    encoding='utf8',
+) as Config:
     Config = json.load(Config)
 
 
-def FrontTask(Header):
+def Choose(cfg=Config) -> list:
+    dic = {}
+    count = 1
+    for i in cfg:
+        dic[str(count)] = i
+        count += 1
+    for key, vue in dic.items():
+        print('{}:{}'.format(key, vue))
+    choice = input('plz type ur choice(order):').split(',')
+    choice = [i for i in choice if i != '']
+    tmp = []
+    for i in choice:
+        tmp.append(dic[i])
+    return tmp
+
+
+def FrontTask():
+    Header = {
+        'user-agent': fake_useragent.UserAgent(
+            path='{}/../json/ua.json'.format(path),
+        ).random,
+        'Connection': 'close',
+    }
     global HomeSite
     tmpvue = 'https://www.quanjixiu.top/'
-    tmpvue = requests.get(url=tmpvue, timeout=Timeout, headers=Header, verify=False)
+    tmpvue = requests.get(
+        url=tmpvue,
+        timeout=Timeout,
+        headers=Header,
+        verify=False,
+    )
     tmpvue.encoding = 'utf8'
     tmpvue = psor(tmpvue.text).xpath('//tbody/tr/td[2]/a[1]/b/text()').get()
     if tmpvue:
@@ -62,19 +97,19 @@ def RandomString():
 
 def SortList(Organization):
     with open(
-        '{}/../json/{}.json'.format(path, Organization), 'r', encoding='utf8'
+        '{}/../json/{}.json'.format(path, Organization),
+        'r',
+        encoding='utf8',
     ) as tmpjson:
         try:
             data = json.load(tmpjson)
         except:
             return
-    for i in range(len(data)):
-        data[i]['No.'] = int(data[i]['No.'])
-    with open('{}/../json/tmp.json'.format(path), 'w', encoding='utf8') as tmpjson:
-        json.dump(data, tmpjson, indent=4, ensure_ascii=False)
     data = sorted(data, key=lambda r: r['No.'], reverse=True)
     with open(
-        '{}/../json/{}.json'.format(path, Organization), 'w', encoding='utf8'
+        '{}/../json/{}.json'.format(path, Organization),
+        'w',
+        encoding='utf8',
     ) as tmpjson:
         json.dump(data, tmpjson, indent=4, ensure_ascii=False)
 
@@ -86,7 +121,12 @@ def SSHClient():
     port = 22
     username = 'root'
     passwd = '071126Xyf'
-    ssh.connect(hostname=hostname, port=port, username=username, password=passwd)
+    ssh.connect(
+        hostname=hostname,
+        port=port,
+        username=username,
+        password=passwd,
+    )
     ssh.exec_command('''ln -s src dst''')
     ssh.close()
 
@@ -118,7 +158,10 @@ def GetPictureUrl(DetailSite_Url: str, Header: dict):
     global PictureList
     Lock.acquire()
     DetailSite = requests.get(
-        url=DetailSite_Url, timeout=Timeout, verify=False, headers=Header
+        url=DetailSite_Url,
+        timeout=Timeout,
+        verify=False,
+        headers=Header,
     )
     DetailSite.encoding = 'utf8'
     PictureList = (
@@ -149,20 +192,28 @@ def DownLoadList(url: str, ua, Organization: str, Title: str):
 def Crawler(
     Organization: str,
     Ends: int,
-    WebLatest: int,
+    RemoteLatest: int,
     LocalLatest: int,
 ):
     global pbar, PictureList
-    with open('{}/../json/name.json'.format(path), 'r', encoding='utf8') as tmpjson:
+    with open(
+        '{}/../json/name.json'.format(path),
+        'r',
+        encoding='utf8',
+    ) as tmpjson:
         try:
             NameArr = json.load(tmpjson)
         except:
             NameArr = []
     try:
         if ChangeTarget == True:
+            pr(
+                'The latest in json is {},but have -t option with {}'.format(
+                    LocalLatest, Target
+                )
+            )
             LocalLatest = Target
-            pr('The latest in json is {},but have -t option with {}'.format(LocalLatest,Target))
-        if LocalLatest == WebLatest:
+        if LocalLatest == RemoteLatest:
             pr(
                 '[{}] {}:网站未更新'.format(
                     datetime.datetime.now().strftime('%H:%M:%S'), Organization
@@ -174,12 +225,15 @@ def Crawler(
                 '[{}] {}:网站已更新    {}->{}'.format(
                     datetime.datetime.now().strftime('%H:%M:%S'),
                     Organization,
-                    WebLatest,
+                    RemoteLatest,
                     LocalLatest,
                 )
             )
         LoopFlag = True
-        for i in range(Start, Ends):
+        for i in range(
+            Start,
+            Ends,
+        ):
             if LoopFlag == True:
                 if i == 0:
                     InitialSite = HomeSite + Organization
@@ -208,11 +262,13 @@ def Crawler(
                 for item in range(len(menu)):
                     menu[item] = HomeSite + menu[item]
                 with open(
-                    '{}/../json/tmp.json'.format(path, Organization),
+                    '{}/../json/{}.json'.format(path, Organization),
                     'r',
                     encoding='utf8',
                 ) as tmpjson:
-                    tmpjson = json.load(tmpjson)
+                    try:
+                        tmpjson = json.load(tmpjson)
+                    except:tmpjson=[]
                 isexist_no = []
                 for i in range(len(tmpjson)):
                     isexist_no.append(tmpjson[i]['No.'])
@@ -236,8 +292,19 @@ def Crawler(
                         Title = str(
                             psor(DetailSite.text).xpath("//header/h1/text()").get()
                         )
-                    if int(re.findall(r'\d+', Title)[0]) in isexist_no:
-                        pr('{}already existed'.format(re.findall(r'\d+', Title)[0]))
+                    # if Point and Point < int(re.findall(r'\d+', Title)[0]):
+                    #     continue
+                    if Ignore and int(re.findall(r'\d+', Title)[0]) in isexist_no:
+                        if str(re.findall(r'\d+', Title)[0]) == str(LocalLatest):
+                            pr(
+                                '[{}] {}:{}已存在,Done'.format(
+                                    datetime.datetime.now().strftime('%H:%M:%S'),
+                                    Organization,
+                                    re.findall(r'\d+', Title)[0],
+                                )
+                            )
+                            return
+                        pr('{} already existed'.format(re.findall(r'\d+', Title)[0]))
                         continue
                     Title = (
                         Title.replace('_', '')
@@ -272,7 +339,6 @@ def Crawler(
                         break
                     else:
                         pass
-
                     WebUrl = menu[j]
                     No = re.findall(r'\d+', Title)[0]
                     try:
@@ -388,19 +454,19 @@ def Crawler(
                                 indent=4,
                                 ensure_ascii=False,
                             )
-                    try:
-
-                        threading.Thread(
-                            target=Compress_and_Upload,
-                            args=(
-                                No,
-                                Name,
-                                Organization,
-                                Title,
-                            ),
-                        ).start()
-                    except:
-                        pr('failed to upload {}'.format(No))
+                    if upload:
+                        try:
+                            threading.Thread(
+                                target=Compress_and_Upload,
+                                args=(
+                                    No,
+                                    Name,
+                                    Organization,
+                                    Title,
+                                ),
+                            ).start()
+                        except:
+                            pr('failed to upload {}'.format(No))
 
             else:
                 break
@@ -415,25 +481,36 @@ def Crawler(
                 json.dump(list(set(NameArr)), tmpjson, ensure_ascii=False, indent=4)
 
 
+# def main(point):
 def main():
+    global Start
+    if Check:
+        FrontTask()
     for i in Config:
+        if writeable:
+            SortList(i)
         Header = {
             'user-agent': fake_useragent.UserAgent(
                 path='{}/../json/ua.json'.format(path),
             ).random,
             'Connection': 'close',
         }
+
         res = requests.get(
             url=HomeSite + i, timeout=Timeout, verify=False, headers=Header
         )
         res.encoding = 'utf8'
-        Page = re.findall(
-            r'\d+',
-            psor(res.text).xpath("//div[@class='pagination']/ul/a[last()]/@href").get(),
-        )[-1]
-        WebLatest = re.findall(
-            r'\d+', psor(res.text).xpath('//div/ul/li/a/span').get()
-        )[0]
+        Page = int(
+            re.findall(
+                r'\d+',
+                psor(res.text)
+                .xpath("//div[@class='pagination']/ul/a[last()]/@href")
+                .get(),
+            )[-1]
+        )
+        RemoteLatest = int(
+            re.findall(r'\d+', psor(res.text).xpath('//div/ul/li/a/span').get())[0]
+        )
         if os.path.getsize('{}/../json/{}.json'.format(path, i)) != 0:
             with open(
                 '{}/../json/{}.json'.format(path, i), 'r', encoding='utf8'
@@ -444,68 +521,106 @@ def main():
                     LocalLatest = 'None'
         else:
             LocalLatest = 'None'
-
-        Crawler(i, int(Page), WebLatest, LocalLatest)
+        # if Point != None:
+        #     Mo = point % 20
+        #     if RemoteLatest -
+        Crawler(i, Page, RemoteLatest, LocalLatest)
 
 
 if __name__ == '__main__':
     opts, args = getopt.getopt(
         args=sys.argv[1:],
-        shortopts='-h-s:-m:-t:-i',
-        longopts=['help', 'startpage=', 'mode=', 'target=', 'ignore'],
+        # shortopts='-h-s:-m:-t:-i-u-c-p:',
+        shortopts='-h-s:-m:-t:-i-u-c-o',
+        longopts=[
+            'help',
+            'startpage=',
+            'mode=',
+            'target=',
+            'ignore',
+            'upload',
+            'check',
+            'organization'
+            # 'point=',
+        ],
     )
+    if '-s' in sys.argv[1:] and '-p' in sys.argv[1:]:
+        raise TypeError("-s option cannot use with -p")
+    info = ''
     for opt_name, opt_value in opts:
         if opt_name in ('-h', '--help'):
             pr(
                 '''
-Tips:U best take -m:r option with -t or -i option
-
+Tips:  U best take [-m:r]/-p option with -t option
+       -s option cannot use with -p
 [-h/--help]:show this info
 [-s/--startpage (page)]:set the page that the crawler start getting
-[-m/--mode (r/w)]:set crawler write json files mode,including writeable and readonly
+[-m/--mode (r/w)]:set crawler write json files mode,including writeable,readonly single-download and multi-download
 [-t/--target (subject)]:set the subject that crawler stop getting
-[-i/--ignore] set whether ignore the subject that already exists or not
+[-i/--ignore] disable the ability that ignores the subject that already exists,it could cause json content is repeated
+[-u/--upload] disable the ability that uploads file to BaiDu netdisk,including .json and img
+[-c/--check] enable check domain's usability
+[-o/--organization] choose Organizations
                '''
+                # [-p/--point ()] set the subject that crawler starts getting
             )
             exit()
         if opt_name in ('-s', '--startpage'):
             try:
                 Start = int(opt_value)
             except:
-                raise getopt.GetoptError(
-                    'option [{}] can only be [int] type'.format(opt_name)
-                )
-            pr('将从{}开始'.format(Start))
+                raise TypeError('option [{}] can only be [int] type'.format(opt_name))
+            info = info + '将从第{}页开始,'.format(Start)
         if opt_name in ('-m', '--mode'):
-            if opt_value != 'r' and opt_value != 'w':
-                raise getopt.GetoptError(
-                    'option [{}] can only choose in [r/w]'.format(opt_name)
+            ModeArr = ['r', 'w', 's', 'm']
+            if opt_value not in ModeArr:
+                raise TypeError(
+                    'option [{}] can only choose in [r/w/s/m]'.format(opt_name)
                 )
-            pr('选择[{}]模式'.format(opt_value))
+            info = info + '选择[{}]模式,'.format(opt_value)
             if opt_value == 'r':
                 writeable = False
             if opt_value == 'w':
                 writeable == True
-
         if opt_name in ('-t', '--target'):
             try:
-                Start = int(opt_value)
+                Target = int(opt_value)
             except:
-                raise getopt.GetoptError(
-                    'option [{}] can only be [int] type'.format(opt_name)
-                )
+                raise TypeError('option [{}] can only be [int] type'.format(opt_name))
+            info = info + '将在第{}期结束,'.format(opt_value)
             ChangeTarget = True
-            Target = int(opt_value)
+        if opt_name in ('-i', '--ignore'):
+            info = info + '不忽略已存在subject-可能造成json重复'
+            Ignore = False
+        if opt_name in ('-u', '--upload'):
+            info = info + '关闭百度网盘同步,'
+            upload = False
+        if opt_name in ('-c', '--check'):
+            info = info + '打开域名可用性校验,'
+            Check = True
+        if opt_name in ('-o', '--organization'):
+            Config = Choose()
+            info = info + '选择了{},'.format(Config)
+        # if opt_name in ('-p', '--point'):
+        #     try:
+        #         Point = int(opt_value)
+        #     except:
+        #         raise TypeError('option [{}] can only be [int] type'.format(opt_name))
+        #     info = info + '将从第{}期开始'.format(Point)
+
+    pr(info[:-1])
     starttime = datetime.datetime.now()
     ArchiveName = path + '/../archives/json-{}-{}.7z'.format(
         datetime.datetime.now().strftime('%Y.%m.%d'), RandomString()
     )
-    with T7z.SevenZipFile(ArchiveName, 'w', password='MDcxMTI2WHlm') as archive:
-        archive.writeall(path + '/../json/', '/jsons/')
-    os.system('''bypy upload {} /jsons/'''.format(ArchiveName))
-    os.remove(ArchiveName)
+    if upload:
+        with T7z.SevenZipFile(ArchiveName, 'w', password='MDcxMTI2WHlm') as archive:
+            archive.writeall(path + '/../json/', '/jsons/')
+        os.system('''bypy upload {} /jsons/'''.format(ArchiveName))
+        os.remove(ArchiveName)
 
-    main(ChangeTarget)
+    # main(Point)
+    main()
 
     endtime = datetime.datetime.now()
     pr('--Spend [{}]'.format(str(endtime - starttime).split('.')[0]))
