@@ -1,7 +1,5 @@
-import time
-import tqdm
-import getopt
 import datetime
+import getopt
 import json
 import os
 import random
@@ -10,11 +8,13 @@ import shutil
 import string
 import sys
 import threading
+from time import sleep
+
 import fake_useragent
 import paramiko
 import parsel
-import py7zr as T7z
 import requests
+import tqdm
 from requests.adapters import HTTPAdapter
 
 requests.packages.urllib3.disable_warnings()
@@ -22,21 +22,21 @@ s = requests.Session()
 s.mount('http://', HTTPAdapter(max_retries=20))
 s.mount('https://', HTTPAdapter(max_retries=20))
 
-global pbar, Config, PictureList, UploadThreadsCounter, Start, writeable, Target, ChangeTarget, Ignore, upload, Check  # , Point
+global pbar, Config, PictureList, StartPage, writeable, Target, ChangeTarget, Ignore, upload, HomeSite, download  # , Point
 upload = True
-Check = False
+download = True
 ChangeTarget = False
 # Point = None
 Ignore = True
 pr = tqdm.tqdm.write
 writeable = True
-Start = 0
+StartPage = 0
 psor = parsel.Selector
 path = sys.path[0]
 Timeout = None
-HomeSite = 'https://www.jpmn5.cc/'
+HomeSite = ''
 Lock = threading.Lock()
-threadsmax = threading.BoundedSemaphore(5)
+threadsmax = threading.BoundedSemaphore(15)
 PictureList = []
 with open(
     '{}/../json/config.json'.format(path),
@@ -44,45 +44,64 @@ with open(
     encoding='utf8',
 ) as Config:
     Config = json.load(Config)
-
-
-def Choose(cfg=Config) -> list:
-    dic = {}
-    count = 1
-    for i in cfg:
-        dic[str(count)] = i
-        count += 1
-    for key, vue in dic.items():
-        print('{}:{}'.format(key, vue))
-    choice = input('plz type ur choice(order):').split(',')
-    choice = [i for i in choice if i != '']
-    tmp = []
-    for i in choice:
-        tmp.append(dic[i])
-    return tmp
+    HomeSite = Config['HomeSite']
+    Config = Config['Organization']
 
 
 def FrontTask():
     Header = {
         'user-agent': fake_useragent.UserAgent(
-            path='{}/../json/ua.json'.format(path),
+            cache_path='{}/../json/ua.json'.format(path),
         ).random,
         'Connection': 'close',
     }
     global HomeSite
-    tmpvue = 'https://www.quanjixiu.top/'
-    tmpvue = requests.get(
-        url=tmpvue,
+    tmp = 'https://www.quanjixiu.top/'
+    tmp = requests.get(
+        url=tmp,
         timeout=Timeout,
         headers=Header,
-        verify=False,
+        verify=True,
     )
-    tmpvue.encoding = 'utf8'
-    tmpvue = psor(tmpvue.text).xpath('//tbody/tr/td[2]/a[1]/b/text()').get()
-    if tmpvue:
-        HomeSite = tmpvue
+    tmp.encoding = 'utf8'
+    tmp = psor(tmp.text).xpath('//td/a[1]/@href').get().lower() + '/'
+    if HomeSite != tmp:
+        HomeSite = tmp
+        with open(
+            '{}/../json/config.json'.format(path),
+            'r+',
+            encoding='utf8',
+        ) as tmpjson:
+            tmp = json.load(tmpjson)
+        tmp['HomeSite'] = HomeSite
+        tmp['LatestCheck'] = datetime.datetime.now().strftime('%Y.%m.%d %H:%M')
+        with open(
+            '{}/../json/config.json'.format(path), 'w', encoding='utf8'
+        ) as tmpjson:
+            json.dump(tmp, tmpjson)
+        return True
     else:
-        return
+        return False
+
+
+def Choose(Flag=True, *args) -> list:
+    dic = {}
+    cfg = Config
+    count = 1
+    for i in cfg:
+        dic[str(count)] = i
+        count += 1
+    if Flag:
+        for key, vue in dic.items():
+            print('{}:{}'.format(key, vue))
+        choice = input('please type your choice(order):').split(',')
+    else:
+        choice = args[0].split(',')
+    choice = [i for i in choice if i != '']
+    tmp = []
+    for i in choice:
+        tmp.append(dic[i])
+    return tmp
 
 
 def RandomString():
@@ -132,38 +151,37 @@ def SSHClient():
 
 
 def Compress_and_Upload(vol, owner, Organization, title):
-    Lock.acquire()
+    # Lock.acquire()
     threadsmax.acquire()
     ArchiveName = (
         path + '/../archives/' + '[' + Organization + ']' + vol + '-' + owner + '.7z'
     )
-    with T7z.SevenZipFile(
-        ArchiveName,
-        'w',
-        password='MDcxMTI2WHlm',
-    ) as archive:
-        archive.writeall('/nas/Girls/{}/{}'.format(Organization, title), Organization)
+    os.system(
+        '''/nas/code/crawler/script/7zz a -pMDcxMTI2WHlm -r '{}' '/nas/Girls/{}/{}/' >/dev/null 2>&1'''.format(
+            ArchiveName, Organization, title
+        )
+    )
     os.system(
         '''bypy --processes 4 upload {} /photos/{}/ >/dev/null 2>&1'''.format(
             ArchiveName, Organization
         )
     )
-    time.sleep(1)
+    sleep(1)
     os.remove(ArchiveName)
     threadsmax.release()
-    Lock.release()
+    # Lock.release()
 
 
 def GetPictureUrl(DetailSite_Url: str, Header: dict):
     global PictureList
-    Lock.acquire()
     DetailSite = requests.get(
         url=DetailSite_Url,
         timeout=Timeout,
-        verify=False,
+        verify=True,
         headers=Header,
     )
     DetailSite.encoding = 'utf8'
+    Lock.acquire()
     PictureList = (
         PictureList
         + psor(DetailSite.text)
@@ -186,7 +204,6 @@ def DownLoadList(url: str, ua, Organization: str, Title: str):
     Lock.acquire()
     pbar.update(1)
     Lock.release()
-    # pass
 
 
 def Crawler(
@@ -202,9 +219,9 @@ def Crawler(
         encoding='utf8',
     ) as tmpjson:
         try:
-            NameArr = json.load(tmpjson)
+            NameList = json.load(tmpjson)
         except:
-            NameArr = []
+            NameList = []
     try:
         if ChangeTarget == True:
             pr(
@@ -222,7 +239,7 @@ def Crawler(
             return
         else:
             pr(
-                '[{}] {}:网站已更新    {}->{}'.format(
+                '[{}] {}:网站已更新  [{}->{}]'.format(
                     datetime.datetime.now().strftime('%H:%M:%S'),
                     Organization,
                     RemoteLatest,
@@ -231,7 +248,7 @@ def Crawler(
             )
         LoopFlag = True
         for i in range(
-            Start,
+            StartPage,
             Ends,
         ):
             if LoopFlag == True:
@@ -243,14 +260,14 @@ def Crawler(
                     )
                 Header = {
                     'user-agent': fake_useragent.UserAgent(
-                        path='{}/../json/ua.json'.format(path),
+                        cache_path='{}/../json/ua.json'.format(path),
                     ).random,
                     'Connection': 'close',
                 }
                 res = requests.get(
                     url=InitialSite,
                     timeout=Timeout,
-                    verify=False,
+                    verify=True,
                     headers=Header,
                 )
                 res.encoding = 'utf8'
@@ -260,7 +277,7 @@ def Crawler(
                     .getall()
                 )
                 for item in range(len(menu)):
-                    menu[item] = HomeSite + menu[item]
+                    menu[item] = HomeSite + menu[item][1:]
                 with open(
                     '{}/../json/{}.json'.format(path, Organization),
                     'r',
@@ -268,7 +285,8 @@ def Crawler(
                 ) as tmpjson:
                     try:
                         tmpjson = json.load(tmpjson)
-                    except:tmpjson=[]
+                    except:
+                        tmpjson = []
                 isexist_no = []
                 for i in range(len(tmpjson)):
                     isexist_no.append(tmpjson[i]['No.'])
@@ -276,7 +294,7 @@ def Crawler(
                     DetailSite = requests.get(
                         url=menu[j],
                         timeout=Timeout,
-                        verify=False,
+                        verify=True,
                         headers=Header,
                     )
                     DetailSite.encoding = 'utf8'
@@ -285,7 +303,7 @@ def Crawler(
                         DetailSite = requests.get(
                             url=menu[j],
                             timeout=Timeout,
-                            verify=False,
+                            verify=True,
                             headers=Header,
                         )
                         DetailSite.encoding = 'utf8'
@@ -295,17 +313,22 @@ def Crawler(
                     # if Point and Point < int(re.findall(r'\d+', Title)[0]):
                     #     continue
                     if Ignore and int(re.findall(r'\d+', Title)[0]) in isexist_no:
-                        if str(re.findall(r'\d+', Title)[0]) == str(LocalLatest):
+                        if int(re.findall(r'\d+', Title)[0]) == LocalLatest:
                             pr(
                                 '[{}] {}:{}已存在,Done'.format(
                                     datetime.datetime.now().strftime('%H:%M:%S'),
                                     Organization,
-                                    re.findall(r'\d+', Title)[0],
+                                    int(re.findall(r'\d+', Title)[0]),
                                 )
                             )
                             return
-                        pr('{} already existed'.format(re.findall(r'\d+', Title)[0]))
-                        continue
+                        else:
+                            pr(
+                                '{}:{} already existed'.format(
+                                    Organization, int(re.findall(r'\d+', Title)[0])
+                                )
+                            )
+                            continue
                     Title = (
                         Title.replace('_', '')
                         .replace('IMISS', 'Imiss')
@@ -320,19 +343,19 @@ def Crawler(
                     if '[' not in Title:
                         Title = re.sub(r'(?i)XiuRen', "[XiuRen秀人网]", Title)
                     pr(
-                        '[{}] 当前:{}-{} target={}'.format(
+                        '[{}] {}:当前:{} target={}'.format(
                             datetime.datetime.now().strftime('%H:%M:%S'),
                             Organization,
-                            re.findall(r'\d+', Title)[0],
+                            int(re.findall(r'\d+', Title)[0]),
                             LocalLatest,
                         )
                     )
-                    if str(re.findall(r'\d+', Title)[0]) == str(LocalLatest):
+                    if int(re.findall(r'\d+', Title)[0]) == LocalLatest:
                         pr(
                             '[{}] {}:{}已存在,Done'.format(
                                 datetime.datetime.now().strftime('%H:%M:%S'),
                                 Organization,
-                                re.findall(r'\d+', Title)[0],
+                                int(re.findall(r'\d+', Title)[0]),
                             )
                         )
                         LoopFlag = False
@@ -367,7 +390,7 @@ def Crawler(
                         )
                     except:
                         Name = 'None'
-                    MultiThreadArr = []
+                    MultiThreadList = []
                     AllSite = (
                         psor(DetailSite.text)
                         .xpath('//div/article/div[1]/ul/a/@href')
@@ -377,18 +400,19 @@ def Crawler(
                         AllSite[item] = HomeSite + AllSite[item]
                     PictureList = []
                     for k in AllSite:
-                        MultiThreadArr.append(
+                        MultiThreadList.append(
                             threading.Thread(
                                 target=GetPictureUrl,
                                 args=(
                                     k,
                                     Header,
                                 ),
+                                name=f'{Organization}.{No}.GetPictureUrl',
                             )
                         )
-                    for item in MultiThreadArr:
+                    for item in MultiThreadList:
                         item.start()
-                    for item in MultiThreadArr:
+                    for item in MultiThreadList:
                         item.join()
                     for item in range(len(PictureList)):
                         PictureList[item] = HomeSite[:-1] + PictureList[item]
@@ -396,36 +420,42 @@ def Crawler(
                         total=len(PictureList),
                         leave=False,
                         unit='img',
-                        desc=Organization + '-' + re.findall(r'\d+', Title)[0],
+                        desc=Organization
+                        + '-'
+                        + str(int(re.findall(r'\d+', Title)[0])),
                     )
-                    MultiThreadArr = []
-                    for item in PictureList:
-                        MultiThreadArr.append(
-                            threading.Thread(
-                                target=DownLoadList,
-                                args=(
-                                    item,
-                                    Header['user-agent'],
-                                    Organization,
-                                    Title,
-                                ),
+                    MultiThreadList = []
+                    if download:
+                        for item in PictureList:
+                            MultiThreadList.append(
+                                threading.Thread(
+                                    target=DownLoadList,
+                                    args=(
+                                        item,
+                                        Header['user-agent'],
+                                        Organization,
+                                        Title,
+                                    ),
+                                    name=f'{Organization}.{No}.DownLoadList',
+                                )
                             )
-                        )
-                    for item in MultiThreadArr:
-                        item.start()
-                    for item in MultiThreadArr:
-                        item.join()
+                        for item in MultiThreadList:
+                            item.start()
+                        for item in MultiThreadList:
+                            item.join()
                     pbar = None
                     info = {}
                     info['Title'] = Title
                     info['WebUrl'] = WebUrl
+                    info['Inpage'] = int(i + 1)
                     info['Name'] = Name
                     info['No.'] = int(No)
                     info['DownloadDate'] = DownloadDate
                     info['WebDate'] = WebDate
                     info['Intro'] = Intro
+                    info['Lenght'] = len(PictureList)
                     info['PicturesPath'] = PictureList
-                    NameArr.append(Name)
+                    NameList.append(Name)
                     if writeable:
                         shutil.copy(
                             '{}/../json/{}.json'.format(path, Organization),
@@ -441,15 +471,15 @@ def Crawler(
                             except:
                                 tmpjson = []
 
-                        InfoArr = []
-                        InfoArr.append(info)
+                        InfoList = []
+                        InfoList.append(info)
                         with open(
                             '{}/../json/{}.json'.format(path, Organization),
                             'w',
                             encoding='utf8',
                         ) as PrintInfo:
                             json.dump(
-                                InfoArr + tmpjson,
+                                InfoList + tmpjson,
                                 PrintInfo,
                                 indent=4,
                                 ensure_ascii=False,
@@ -464,9 +494,10 @@ def Crawler(
                                     Organization,
                                     Title,
                                 ),
+                                name=f'{Organization}.{No}.Compress&Upload',
                             ).start()
                         except:
-                            pr('failed to upload {}'.format(No))
+                            pr('{}:failed to upload {}'.format(Organization, No))
 
             else:
                 break
@@ -478,26 +509,39 @@ def Crawler(
             with open(
                 '{}/../json/name.json'.format(path), 'w', encoding='utf8'
             ) as tmpjson:
-                json.dump(list(set(NameArr)), tmpjson, ensure_ascii=False, indent=4)
+                json.dump(list(set(NameList)), tmpjson, ensure_ascii=False, indent=4)
 
 
 # def main(point):
 def main():
-    global Start
-    if Check:
-        FrontTask()
+    with open(
+        '{}/../json/config.json'.format(path),
+        'r',
+        encoding='utf8',
+    ) as tmp:
+        tmp = json.load(tmp)
+    tmp = tmp['LatestCheck']
+    tmp = datetime.datetime.strptime(tmp, '%Y.%m.%d %H:%M')
+    tmp = datetime.datetime.now() - tmp
+    if tmp.days > 2:
+        pr('自动运行FrontTask')
+        if FrontTask():
+            pr('已更改HomeSite ', end='')
+        else:
+            pr('HomeSite未更改 ', end='')
+    pr(f'当前HomeSite [{HomeSite}]')
     for i in Config:
         if writeable:
             SortList(i)
         Header = {
             'user-agent': fake_useragent.UserAgent(
-                path='{}/../json/ua.json'.format(path),
+                cache_path='{}/../json/ua.json'.format(path),
             ).random,
             'Connection': 'close',
         }
 
         res = requests.get(
-            url=HomeSite + i, timeout=Timeout, verify=False, headers=Header
+            url=HomeSite + i, timeout=Timeout, verify=True, headers=Header
         )
         res.encoding = 'utf8'
         Page = int(
@@ -531,7 +575,7 @@ if __name__ == '__main__':
     opts, args = getopt.getopt(
         args=sys.argv[1:],
         # shortopts='-h-s:-m:-t:-i-u-c-p:',
-        shortopts='-h-s:-m:-t:-i-u-c-o',
+        shortopts='-h-s:-m:-t:-i-u-c-o-d',
         longopts=[
             'help',
             'startpage=',
@@ -540,7 +584,8 @@ if __name__ == '__main__':
             'ignore',
             'upload',
             'check',
-            'organization'
+            'organization',
+            'download'
             # 'point=',
         ],
     )
@@ -557,23 +602,25 @@ Tips:  U best take [-m:r]/-p option with -t option
 [-s/--startpage (page)]:set the page that the crawler start getting
 [-m/--mode (r/w)]:set crawler write json files mode,including writeable,readonly single-download and multi-download
 [-t/--target (subject)]:set the subject that crawler stop getting
-[-i/--ignore] disable the ability that ignores the subject that already exists,it could cause json content is repeated
-[-u/--upload] disable the ability that uploads file to BaiDu netdisk,including .json and img
-[-c/--check] enable check domain's usability
-[-o/--organization] choose Organizations
+[-i/--ignore]:disable the module that ignores the subject that already exists,it could cause json content is repeated
+[-u/--upload]:disable the module that uploads file to BaiDu netdisk,including .json and img
+[-c/--check]:enable check domain's usability
+[-o/--organization]:choose Organizations,you can input args in the end(args[0])
+[-d/--download]:disable the download module
                '''
                 # [-p/--point ()] set the subject that crawler starts getting
             )
             exit()
         if opt_name in ('-s', '--startpage'):
             try:
-                Start = int(opt_value)
+                StartPage = int(opt_value) - 1
             except:
                 raise TypeError('option [{}] can only be [int] type'.format(opt_name))
-            info = info + '将从第{}页开始,'.format(Start)
+            info = info + '将从第{}页开始,'.format(StartPage + 1)
+
         if opt_name in ('-m', '--mode'):
-            ModeArr = ['r', 'w', 's', 'm']
-            if opt_value not in ModeArr:
+            ModeList = ['r', 'w', 's', 'm']
+            if opt_value not in ModeList:
                 raise TypeError(
                     'option [{}] can only choose in [r/w/s/m]'.format(opt_name)
                 )
@@ -582,6 +629,7 @@ Tips:  U best take [-m:r]/-p option with -t option
                 writeable = False
             if opt_value == 'w':
                 writeable == True
+
         if opt_name in ('-t', '--target'):
             try:
                 Target = int(opt_value)
@@ -589,18 +637,29 @@ Tips:  U best take [-m:r]/-p option with -t option
                 raise TypeError('option [{}] can only be [int] type'.format(opt_name))
             info = info + '将在第{}期结束,'.format(opt_value)
             ChangeTarget = True
+
         if opt_name in ('-i', '--ignore'):
             info = info + '不忽略已存在subject-可能造成json重复'
             Ignore = False
+
         if opt_name in ('-u', '--upload'):
             info = info + '关闭百度网盘同步,'
             upload = False
+
         if opt_name in ('-c', '--check'):
-            info = info + '打开域名可用性校验,'
-            Check = True
+            info = info + '打开网站可用性校验,'
+            FrontTask()
+
         if opt_name in ('-o', '--organization'):
-            Config = Choose()
+            if args:
+                Config = Choose(False, args[0])
+            else:
+                Config = Choose()
             info = info + '选择了{},'.format(Config)
+
+        if opt_name in ('-d', '--download'):
+            download = False
+            info = info + '关闭wget下载,'
         # if opt_name in ('-p', '--point'):
         #     try:
         #         Point = int(opt_value)
@@ -610,12 +669,15 @@ Tips:  U best take [-m:r]/-p option with -t option
 
     pr(info[:-1])
     starttime = datetime.datetime.now()
-    ArchiveName = path + '/../archives/json-{}-{}.7z'.format(
-        datetime.datetime.now().strftime('%Y.%m.%d'), RandomString()
-    )
     if upload:
-        with T7z.SevenZipFile(ArchiveName, 'w', password='MDcxMTI2WHlm') as archive:
-            archive.writeall(path + '/../json/', '/jsons/')
+        ArchiveName = path + '/../archives/json-{}-{}.7z'.format(
+            datetime.datetime.now().strftime('%Y.%m.%d'), RandomString()
+        )
+        os.system(
+            f'''/nas/code/crawler/script/7zz a -pMDcxMTI2WHlm -r '{ArchiveName}' '/nas/code/crawler/json/' >/dev/null 2>&1'''
+        )
+        # with T7z.SevenZipFile(ArchiveName, 'w', password='MDcxMTI2WHlm') as archive:
+        #     archive.writeall(path + '/../json/', '/jsons/')
         os.system('''bypy upload {} /jsons/'''.format(ArchiveName))
         os.remove(ArchiveName)
 
